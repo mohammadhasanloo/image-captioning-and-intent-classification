@@ -1,118 +1,131 @@
-# NN-CA4-1.Image-Captioning-2.Intent-Classification
+# Image Captioning and Intent Classification
 
-### 1.Intent Classification [Link](#part-1-intent-classification)
+Two sequence-modelling projects in one repository: generating a sentence that
+describes a photograph, and classifying an utterance into coarse and fine intent
+labels.
 
-### 2.Image Captioning [Link](#part-2-image-captioning)
+![Frozen against fine-tuned captions on the same images](docs/captioning_comparison.png)
 
-# Part 1: Intent Classification
+## Requirements
 
-In this report, we present the implementation of code for intent classification in question-answering using LSTM architectures based on the research article [Intent Classification in Question-Answering Using LSTM Architectures](https://arxiv.org/pdf/2001.09330.pdf).
+Python 3.10 or later. Both projects need their own dataset: a captioning corpus
+of images with reference sentences, and a labelled set of utterances with main
+and sub class annotations.
 
-### 2. Data Preprocessing
+## Installation
 
-#### Normalization
+```bash
+pip install -e .
+```
 
-One of the crucial steps in text data preprocessing is normalization. In this phase, the input text is transformed into a standard form. This may involve removing punctuation marks, converting letters to lowercase, or eliminating the use of specific words or characters. Important normalization methods include:
+With the test suite:
 
-- Removal of punctuation marks.
-- Conversion of letters to lowercase.
-- Expansion of abbreviations to full words.
+```bash
+pip install -e ".[dev]"
+```
 
-#### Tokenization
+## Usage
 
-Tokenization involves dividing the input text into smaller units, typically words, but they can also include phrases, numbers, and punctuation marks. Tokens are often used as processing units for various text processing algorithms. Key tokenization methods include:
+Train a captioner and caption an image:
 
-- Tokenization based on whitespace.
-- Tokenization based on punctuation.
-- Tokenization using regular expressions.
-- Tokenization based on parts-of-speech (POS) tags.
+```python
+from captioning import build_captioner, caption_image
 
-Each of these methods can be used for text preprocessing, depending on the type of text and the algorithm being applied. Some essential text preprocessing techniques include:
+captioner, encoder = build_captioner(vocab_size, max_length, trainable_cnn=False)
+captioner.fit([images, input_tokens], target_tokens, epochs=15)
+print(caption_image(captioner, encoder, image, tokenizer, max_length))
+```
 
-- Stop word removal.
-- Stemming.
-- Lemmatization.
-- Named Entity Recognition (NER).
-- Chunking.
-- Sentiment analysis.
-- Machine translation.
+Train an intent classifier and score it:
 
-In this report, a dataset with 5452 samples for training (df_train) and 500 samples for testing (df_test) is used. Each dataset contains three columns: coarse_label, fine_label, and text. The coarse_label represents the main class, and the fine_label represents the sub-class. There are six unique values in coarse_label, namely ABBR, ENTY, DESC, HUM, LOC, and NUM, along with 47 sub-classes.
+```python
+from intent import build_two_head, evaluate
 
-After applying the mentioned preprocessing steps, sentences are embedded. To achieve this, words in each sentence are first tokenized, padded to a specified length (e.g., 50), and then converted into 300-dimensional vectors using pre-trained word embeddings such as GloVe.
+model = build_two_head(vocab_size, sequence_length, num_main_classes, num_sub_classes)
+model.fit(tokens, {"main_class": main_labels, "sub_class": sub_labels}, epochs=20)
+print(evaluate(sub_labels, model.predict(tokens)[1]).format())
+```
 
-### 3. Model Implementation and Results
+## Results
 
-In the paper, the accuracy achieved on the training set is 99.26%, while in this project, it reached 98.98%. For the validation set, the paper reports an accuracy of 87.80%, whereas this project achieved 95.15%, demonstrating better results. The size_hidden parameter was tuned, and a size of 100 performed better compared to 25, as it increased model complexity and improved classification accuracy for main classes. However, an excessively large size_hidden can lead to longer training times and overfitting.
+### Image captioning
 
-Comparison of Model Accuracy (Size_Hidden: 25 vs. 100):
+A ResNet encoder projects the image to a single 300-dimensional vector, which is
+prepended to the word embedding sequence and read by an LSTM as its first token.
+Trained twice on the same data, once with the encoder frozen and once fine-tuned
+end to end.
 
-| Size_Hidden | Paper Training Set (%) | Paper Test Set (%) | Project Training Set (%) | Project Test Set (%) |
-| ----------- | ---------------------- | ------------------ | ------------------------ | -------------------- |
-| 25          | 99.67                  | 96.74              | 99.26                    | 87.80                |
-| 100         | 98.98                  | 95.15              | 99.98                    | 90.20                |
+The frozen encoder describes each image. The fine-tuned one emits the same
+sentence for every image in the test set, "man in black shirt and black pants is
+standing on the sidewalk", regardless of what it is shown.
 
-### 4. Responder Model Implementation
+That is a collapse rather than a poor score. Training a pretrained CNN on a small
+captioning set at the decoder's learning rate destroys the visual features before
+the decoder learns to use them. The decoder then does the only thing left
+available: it learns the most probable caption in the training distribution and
+emits it unconditionally. The loss curve alone does not show this, since the loss
+still falls. `trainable_cnn=True` reproduces it.
 
-The implemented model architecture includes a Bidirectional LSTM layer with 100 units for size_hidden. The model employs a softmax activation function and Mean Squared Error (MSE) as the loss function.
+### Intent classification
 
-The generated answers are not exact but can provide insights into the content's general nature. The quality of the answers depends on various factors and is an area for further improvement.
+An LSTM over utterance tokens, in two arrangements: one softmax over the flat
+label set, and a shared encoder with separate heads for the coarse and fine
+labels.
 
-# Part 2: Image Captioning
+| model | hidden units | main accuracy | sub accuracy |
+| --- | --- | --- | --- |
+| single head | 100 | 96.7% | |
+| single head | 25 | 95.2% | |
+| two heads | 100 | 96.1% | 98.9% |
+| two heads | 25 | 96.4% | 98.7% |
 
-In this section, we present the implementation of an image captioning model based on the research article [Image Captioning](https://arxiv.org/pdf/1805.09137.pdf).
+Widening the LSTM from 25 to 100 units buys about 1.5 points on the single-head
+model and nothing on the two-head one, worth knowing before paying for the larger
+model.
 
-### Model with Frozen CNN
+The sub-class accuracy needs care. 98.9% looks like the strongest number here and
+is the weakest result in the table. The sub-class label set is large and heavily
+skewed, so a model leaning on the frequent labels scores very high accuracy while
+doing little on the rest. `intent.metrics.evaluate` reports macro and micro F1
+alongside accuracy for exactly this reason, and a test shows a classifier that
+always predicts the majority class scoring 95% accuracy and under 0.5 macro-F1.
 
-**Overview**
+## Design notes
 
-In this part, we load and freeze the ResNet-18 model for feature extraction and caption generation.
+`build_captioner` returns the encoder alongside the model. Greedy decoding runs
+the decoder once per generated word, and without a handle on the encoder the
+image would be pushed through the whole CNN again at every step. `greedy_decode`
+takes a step function so the caller decides what is cached between steps, and
+generation is kept separate from any plotting.
 
-**Data Preprocessing**
+## Project structure
 
-To begin, we download the dataset and implement functions for loading and preprocessing it:
+```
+captioning/
+    model.py      CNN encoder and LSTM decoder, encoder exposed for reuse
+    decoding.py   greedy decoding with a caller-controlled step function
+intent/
+    model.py      single-head and shared-encoder two-head classifiers
+    metrics.py    accuracy, macro and micro F1 over a whole split
+tests/            decoding behaviour, metric behaviour, model wiring
+docs/             figures referenced by this README
+pyproject.toml    dependencies
+```
 
-- Lowercase conversion
-- Punctuation removal
-- Elimination of extra whitespaces
-- Removal of single-letter words
-- Appending the "endseq" token to captions
+## Components
 
-**Captioning Approach**
+| module | responsibility |
+| --- | --- |
+| `captioning.model` | Builds the encoder, decoder and combined captioner |
+| `captioning.decoding` | Token-by-token generation, independent of any model |
+| `intent.model` | Builds both classifier arrangements |
+| `intent.metrics` | Label handling and split-level scoring |
 
-Since our model uses the LSTM network, which only receives image features once, we've made some interesting choices:
+## Testing
 
-- Omitting the "startseq" token to avoid delaying meaningful word generation
-- Leveraging post-padding to ensure uniform sentence lengths
-- Using only the "endseq" token
+```bash
+python -m pytest tests/
+```
 
-**Model Architecture**
-
-We load ResNet-18, omitting the default final linear layer, and use a custom linear layer for feature embedding. Dropout is applied after the LSTM layer.
-
-**Training and Results**
-
-Training these models can be time-consuming, so we've implemented a Learning Rate Scheduler for stability. We split the dataset into training and test sets and create data generators for both.
-
-**Model Outputs**
-
-Despite having more parameters, this model exhibits higher training error and poor performance on the test data.
-
-### Model with Trainable CNN
-
-**Overview**
-
-In this section, we make the ResNet model trainable.
-
-**Challenges**
-
-- Training CNN from scratch alongside the untrained network can be challenging
-- CNN might not learn the desired task effectively
-
-**Training and Results**
-
-Despite having more parameters, this model exhibits higher training error and poor performance on the test data.
-
----
-
-Please refer to the project files for detailed code and results. This README provides a high-level overview of our image captioning implementation.
+Fourteen tests. The captioner is built against a small stand-in backbone, so
+nothing is downloaded and the suite runs in seconds.

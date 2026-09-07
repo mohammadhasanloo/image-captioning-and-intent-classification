@@ -1,0 +1,22 @@
+[project]
+name = "captioning-and-intent"
+version = "1.0.0"
+description = "Show-and-Tell image captioning, and coarse/fine intent classification with recurrent encoders"
+requires-python = ">=3.10"
+dependencies = [
+    "keras>=3.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "tensorflow>=2.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["captioning*", "intent*"]
